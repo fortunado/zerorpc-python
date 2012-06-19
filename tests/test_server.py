@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 
-from nose.tools import assert_raises
+from nose.tools import *
 import gevent
 
 from zerorpc import zmq

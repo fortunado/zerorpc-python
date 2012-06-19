@@ -26,9 +26,12 @@
 from zerorpc import zmq
 import zerorpc
 from testutils import teardown, random_ipc_endpoint
+from zerorpc.serializers.default import Serializer
 
 class MokupContext():
     _next_id = 0
+
+    serializer = Serializer()
 
     def new_msgid(self):
         new_id = MokupContext._next_id
@@ -43,46 +46,46 @@ def test_context():
 
 def test_event():
     context = MokupContext()
-    event = zerorpc.Event('mylittleevent', (None,), context=context)
+    event = zerorpc.Event('mylittleevent', (None,), {}, context=context)
     print event
     assert event.name == 'mylittleevent'
     assert event.header['message_id'] == 0
     assert event.args == (None,)
 
-    event = zerorpc.Event('mylittleevent2', ('42',), context=context)
+    event = zerorpc.Event('mylittleevent2', ('42',), {}, context=context)
     print event
     assert event.name == 'mylittleevent2'
     assert event.header['message_id'] == 1
     assert event.args == ('42',)
 
-    event = zerorpc.Event('mylittleevent3', ('a', 42), context=context)
+    event = zerorpc.Event('mylittleevent3', ('a', 42), {}, context=context)
     print event
     assert event.name == 'mylittleevent3'
     assert event.header['message_id'] == 2
     assert event.args == ('a', 42)
 
-    event = zerorpc.Event('mylittleevent4', ('b', 21), context=context)
+    event = zerorpc.Event('mylittleevent4', ('b', 21), {}, context=context)
     print event
     assert event.name == 'mylittleevent4'
     assert event.header['message_id'] == 3
     assert event.args == ('b', 21)
 
-    packed = event.pack()
-    unpacked = zerorpc.Event.unpack(packed)
+    packed = event.pack(context.serializer)
+    unpacked = zerorpc.Event.unpack(context.serializer, packed)
     print unpacked
 
     assert unpacked.name == 'mylittleevent4'
     assert unpacked.header['message_id'] == 3
     assert unpacked.args == ('b', 21)
 
-    event = zerorpc.Event('mylittleevent5', ('c', 24, True),
+    event = zerorpc.Event('mylittleevent5', ('c', 24, True), {},
             header={'lol': 'rofl'}, context=None)
     print event
     assert event.name == 'mylittleevent5'
     assert event.header['lol'] == 'rofl'
     assert event.args == ('c', 24, True)
 
-    event = zerorpc.Event('mod', (42,), context=context)
+    event = zerorpc.Event('mod', (42,), {}, context=context)
     print event
     assert event.name == 'mod'
     assert event.header['message_id'] == 4

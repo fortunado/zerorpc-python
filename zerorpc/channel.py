@@ -55,14 +55,14 @@ class ChannelMultiplexer(object):
         if self._channel_dispatcher_task:
             self._channel_dispatcher_task.kill()
 
-    def create_event(self, name, args, xheader={}):
-        return self._events.create_event(name, args, xheader)
+    def create_event(self, name, args, kwargs = None, xheader=None):
+        return self._events.create_event(name, args, kwargs, xheader)
 
     def emit_event(self, event, identity=None):
         return self._events.emit_event(event, identity)
 
-    def emit(self, name, args, xheader={}):
-        return self._events.emit(name, args, xheader)
+    def emit(self, name, args, kwargs = None, xheader=None):
+        return self._events.emit(name, args, kwargs, xheader)
 
     def recv(self):
         if self._broadcast_queue is not None:
@@ -132,8 +132,8 @@ class Channel(object):
             del self._multiplexer._active_channels[self._channel_id]
             self._channel_id = None
 
-    def create_event(self, name, args, xheader={}):
-        event = self._multiplexer.create_event(name, args, xheader)
+    def create_event(self, name, args, kwargs=None, xheader=None):
+        event = self._multiplexer.create_event(name, args, kwargs, xheader)
         if self._channel_id is None:
             self._channel_id = event.header['message_id']
             self._multiplexer._active_channels[self._channel_id] = self
@@ -141,8 +141,8 @@ class Channel(object):
             event.header['response_to'] = self._channel_id
         return event
 
-    def emit(self, name, args, xheader={}):
-        event = self.create_event(name, args, xheader)
+    def emit(self, name, args, kwargs=None, xheader=None):
+        event = self.create_event(name, args, kwargs, xheader)
         self._multiplexer.emit_event(event, self._zmqid)
 
     def emit_event(self, event):
@@ -219,11 +219,11 @@ class BufferedChannel(object):
                     self.close()
                     return
 
-    def create_event(self, name, args, xheader={}):
-        return self._channel.create_event(name, args, xheader)
+    def create_event(self, name, args, kwargs=None, xheader=None):
+        return self._channel.create_event(name, args, kwargs, xheader)
 
     def emit_event(self, event, block=True, timeout=None):
-        if self._remote_queue_open_slots == 0:
+        if not self._remote_queue_open_slots:
             if not block:
                 return False
             self._remote_can_recv.clear()
@@ -236,8 +236,8 @@ class BufferedChannel(object):
             raise
         return True
 
-    def emit(self, name, args, xheader={}, block=True, timeout=None):
-        event = self.create_event(name, args, xheader)
+    def emit(self, name, args, kwargs = None, xheader=None, block=True, timeout=None):
+        event = self.create_event(name, args, kwargs, xheader)
         return self.emit_event(event, block, timeout)
 
     def _request_data(self):

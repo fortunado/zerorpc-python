@@ -23,7 +23,8 @@
 # SOFTWARE.
 
 
-import msgpack
+#import msgpack
+import cPickle
 import gevent.pool
 import gevent.queue
 import gevent.event
@@ -107,17 +108,18 @@ class Receiver(object):
 
 class Event(object):
 
-    __slots__ = [ '_name', '_args', '_header' ]
+    __slots__ = [ '_name', '_args', '_header', '_kwargs', "_serializer" ]
 
-    def __init__(self, name, args, context, header=None):
+    def __init__(self, name, args, kwargs, context, header=None):
         self._name = name
         self._args = args
+        self._kwargs = kwargs or {}
         if header is None:
             context = context
             self._header = {
-                    'message_id': context.new_msgid(),
-                    'v': 3
-                    }
+                'message_id': context.new_msgid(),
+                'v': 3
+            }
         else:
             self._header = header
 
@@ -137,20 +139,23 @@ class Event(object):
     def args(self):
         return self._args
 
-    def pack(self):
-        return msgpack.Packer().pack((self._header, self._name, self._args))
+    @property
+    def kwargs(self):
+        return self._kwargs
+
+    def pack(self, serializer):
+        return serializer.pack((self._header, self._name, self._args, self._kwargs))
+
 
     @staticmethod
-    def unpack(blob):
-        unpacker = msgpack.Unpacker()
-        unpacker.feed(blob)
-        (header, name, args) = unpacker.unpack()
+    def unpack(serializer, blob):
+        header, name, args, kwargs = serializer.unpack(blob)
 
         # Backward compatibility
         if not isinstance(header, dict):
             header = {}
 
-        return Event(name, args, None, header)
+        return Event(name, args, kwargs, None, header)
 
     def __str__(self, ignore_args=False):
         if ignore_args:
@@ -159,21 +164,24 @@ class Event(object):
             args = self._args
             try:
                 args = '<<{0}>>'.format(str(self.unpack(self._args)))
-            except:
+            except Exception:
                 pass
-        return '{0} {1} {2}'.format(self._name, self._header,
-                args)
+
+        return '{0} {1} {2}'.format(self._name, self._header, args)
 
 
 class Events(object):
     def __init__(self, zmq_socket_type, context=None):
         self._zmq_socket_type = zmq_socket_type
         self._context = context or Context.get_instance()
+        assert self._context
         self._socket = zmq.Socket(self._context, zmq_socket_type)
         self._send = self._socket.send_multipart
         self._recv = self._socket.recv_multipart
+
         if zmq_socket_type in (zmq.PUSH, zmq.PUB, zmq.XREQ, zmq.XREP):
             self._send = Sender(self._socket)
+
         if zmq_socket_type in (zmq.PULL, zmq.SUB, zmq.XREQ, zmq.XREP):
             self._recv = Receiver(self._socket)
 
@@ -218,26 +226,29 @@ class Events(object):
             r.append(self._socket.bind(endpoint_))
         return r
 
-    def create_event(self, name, args, xheader={}):
-        event = Event(name, args, context=self._context)
-        for k, v in xheader.items():
+    def create_event(self, name, args, kwargs=None, xheader=None):
+        event = Event(name, args, kwargs, context=self._context)
+        for k, v in (xheader or {}).items():
             if k == 'zmqid':
                 continue
             event.header[k] = v
         return event
 
     def emit_event(self, event, identity=None):
+        pack = lambda: event.pack(self.context.serializer)
+
         if identity is not None:
             parts = list(identity)
-            parts.extend(['', event.pack()])
+            parts.extend(['', pack()])
         elif self._zmq_socket_type in (zmq.XREQ, zmq.XREP):
-            parts = ('', event.pack())
+            parts = ('', pack())
         else:
-            parts = (event.pack(),)
+            parts = (pack(),)
         self._send(parts)
 
-    def emit(self, name, args, xheader={}):
-        event = self.create_event(name, args, xheader)
+    def emit(self, name, args, kwargs=None, xheader=None):
+        xheader = xheader or {}
+        event = self.create_event(name, args, kwargs, xheader)
         identity = xheader.get('zmqid', None)
         return self.emit_event(event, identity)
 
@@ -249,7 +260,7 @@ class Events(object):
         else:
             identity = parts[0:-2]
             blob = parts[-1]
-        event = Event.unpack(blob)
+        event = Event.unpack(self._context.serializer, blob)
         if identity is not None:
             event.header['zmqid'] = identity
         return event
@@ -274,24 +285,24 @@ class WrappedEvents(object):
     def recv_is_available(self):
         return self._channel.recv_is_available
 
-    def create_event(self, name, args, xheader={}):
-        event = Event(name, args, self._channel.context)
-        event.header.update(xheader)
+    def create_event(self, name, args, kwargs=None, xheader=None):
+        event = Event(name, args, kwargs, self._channel.context)
+        event.header.update(xheader or {})
         return event
 
     def emit_event(self, event, identity=None):
-        event_payload = (event.header, event.name, event.args)
+        event_payload = (event.header, event.name, event.args, event.kwargs)
         wrapper_event = self._channel.create_event('w', event_payload)
         self._channel.emit_event(wrapper_event)
 
-    def emit(self, name, args, xheader={}):
-        wrapper_event = self.create_event(name, args, xheader)
+    def emit(self, name, args, kwargs=None, xheader=None):
+        wrapper_event = self.create_event(name, args, kwargs, xheader or {})
         self.emit_event(wrapper_event)
 
     def recv(self, timeout=None):
         wrapper_event = self._channel.recv()
-        (header, name, args) = wrapper_event.args
-        return Event(name, args, None, header)
+        (header, name, args, kwargs) = wrapper_event.args
+        return Event(name, args, kwargs, None, header)
 
     @property
     def context(self):

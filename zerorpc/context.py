@@ -21,19 +21,19 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-
 import uuid
 import functools
 import random
 
 import gevent_zmq as zmq
-
+from .utils import load_by_path, Singleton
 
 class Context(zmq.Context):
     _instance = None
+#    __metaclass__ = Singleton
 
     def __init__(self):
+        super(Context, self).__init__()
         self._middlewares = []
         self._middlewares_hooks = {
             'resolve_endpoint': [],
@@ -44,6 +44,25 @@ class Context(zmq.Context):
             'inspect_error': []
         }
         self._reset_msgid()
+        self._serializer = "default"
+
+    @property
+    def serializer(self):
+        if isinstance(self._serializer, basestring):
+            self._serializer = self._get_serializer(self._serializer)
+
+        return self._serializer
+
+
+    def _get_serializer(self, path):
+        return load_by_path(
+            ".serializers.{0}.Serializer".format(path)
+        )()
+
+
+    def register_serializer(self, serializer):
+        self._serializer = serializer
+
 
     @staticmethod
     def get_instance():

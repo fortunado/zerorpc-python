@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+#coding=utf-8
 # Open Source Initiative OSI - The MIT License (MIT):Licensing
 #
 # The MIT License (MIT)
@@ -68,16 +68,19 @@ class ServerBase(object):
             return methods
         server_methods = set(getattr(self, k) for k in dir(cls) if not
                 k.startswith('_'))
-        return dict((k, getattr(methods, k))
-                for k in dir(methods)
-                if callable(getattr(methods, k))
-                and not k.startswith('_')
-                and getattr(methods, k) not in server_methods
-                )
+        return dict(
+            (k, getattr(methods, k))
+            for k in dir(methods)
+            if callable(getattr(methods, k))
+            and not k.startswith('_')
+            and getattr(methods, k) not in server_methods
+        )
+
 
     def close(self):
         self.stop()
         self._multiplexer.close()
+
 
     def _zerorpc_inspect(self, method=None, long_doc=True):
         if method:
@@ -92,20 +95,21 @@ class ServerBase(object):
         return {'name': self._name,
                 'methods': detailled_methods}
 
+
     def _inject_builtins(self):
-        self._methods['_zerorpc_list'] = lambda: [m for m in self._methods
-                if not m.startswith('_')]
+        self._methods['_zerorpc_list'] = lambda: [m for m in self._methods if not m.startswith('_')]
         self._methods['_zerorpc_name'] = lambda: self._name
         self._methods['_zerorpc_ping'] = lambda: ['pong', self._name]
         self._methods['_zerorpc_help'] = lambda m: self._methods[m].__doc__
-        self._methods['_zerorpc_args'] = \
-            lambda m: self._methods[m]._zerorpc_args()
+        self._methods['_zerorpc_args'] = lambda m: self._methods[m]._zerorpc_args()
         self._methods['_zerorpc_inspect'] = self._zerorpc_inspect
 
-    def __call__(self, method, *args):
+
+    def __call__(self, method, *args, **kwargs):
         if method not in self._methods:
             raise NameError(method)
-        return self._methods[method](*args)
+        return self._methods[method](*args, **kwargs)
+
 
     def _print_traceback(self, protocol_v1):
         exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -117,36 +121,45 @@ class ServerBase(object):
                     exc_traceback)
 
             if protocol_v1:
-                return (repr(exc_value),)
+                return repr(exc_value),
 
             human_traceback = traceback.format_exc()
             name = exc_type.__name__
             human_msg = str(exc_value)
-            return (name, human_msg, human_traceback)
+            return name, human_msg, human_traceback
         finally:
             del exc_traceback
+
 
     def _async_task(self, initial_event):
         protocol_v1 = initial_event.header.get('v', 1) < 2
         channel = self._multiplexer.channel(initial_event)
-        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq,
-                passive=protocol_v1)
-        bufchan = BufferedChannel(hbchan)
-        event = bufchan.recv()
+        hb_chan = HeartBeatOnChannel(
+            channel,
+            freq=self._heartbeat_freq,
+            passive=protocol_v1
+        )
+
+        buf_chan = BufferedChannel(hb_chan)
+        event = buf_chan.recv()
         try:
             self._context.middleware_load_task_context(event.header)
-            functor = self._methods.get(event.name, None)
-            if functor is None:
+            def_ = self._methods.get(event.name, None)
+            if def_ is None:
                 raise NameError(event.name)
-            functor.pattern.process_call(self._context, bufchan, event, functor)
+
+            def_.pattern.process_call(self._context, buf_chan, event, def_)
         except LostRemote:
             self._print_traceback(protocol_v1)
         except Exception:
             exception_info = self._print_traceback(protocol_v1)
-            bufchan.emit('ERR', exception_info,
-                    self._context.middleware_get_task_context())
+            buf_chan.emit(
+                'ERR',
+                exception_info,
+                self._context.middleware_get_task_context()
+            )
         finally:
-            bufchan.close()
+            buf_chan.close()
 
     def _acceptor(self):
         while True:
@@ -207,48 +220,80 @@ class ClientBase(object):
                         'calling remote method {0}'.format(method))
 
             pattern = self._select_pattern(event)
-            return pattern.process_answer(self._context, bufchan, event, method,
-                    self._raise_remote_error)
+            return pattern.process_answer(
+                self._context,
+                bufchan,
+                event,
+                method,
+                self._raise_remote_error
+            )
         except:
             bufchan.close()
             raise
 
-    def __call__(self, method, *args, **kargs):
-        timeout = kargs.get('timeout', self._timeout)
+    def __call__(self, method, *args, **kwargs):
+        timeout = kwargs.pop('timeout', self._timeout)
         channel = self._multiplexer.channel()
-        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq,
-                passive=self._passive_heartbeat)
-        bufchan = BufferedChannel(hbchan, inqueue_size=kargs.get('slots', 100))
+        hbchan = HeartBeatOnChannel(
+            channel,
+            freq=self._heartbeat_freq,
+            passive=self._passive_heartbeat
+        )
+
+        bufchan = BufferedChannel(
+            hbchan,
+            inqueue_size=kwargs.pop('slots', 100)
+        )
 
         xheader = self._context.middleware_get_task_context()
-        bufchan.emit(method, args, xheader)
+        bufchan.emit(method, args, kwargs, xheader)
 
         try:
-            if kargs.get('async', False) is False:
+            if kwargs.pop('async', False) is False:
                 return self._process_response(method, bufchan, timeout)
 
             async_result = gevent.event.AsyncResult()
-            gevent.spawn(self._process_response, method, bufchan,
-                    timeout).link(async_result)
+            gevent.spawn(
+                self._process_response,
+                method,
+                bufchan,
+                timeout
+            ).link(async_result)
+
             return async_result
         except:
             bufchan.close()
             raise
 
     def __getattr__(self, method):
-        return lambda *args, **kargs: self(method, *args, **kargs)
+        return lambda *args, **kwargs: self(method, *args, **kwargs)
 
 
 class Server(SocketBase, ServerBase):
 
-    def __init__(self, methods=None, name=None, context=None, pool_size=None,
-            heartbeat=5):
+    def __init__(
+            self,
+            methods=None,
+            name=None,
+            context=None,
+            pool_size=None,
+            heartbeat=5
+    ):
         SocketBase.__init__(self, zmq.XREP, context)
         if methods is None:
             methods = self
+
         methods = ServerBase._zerorpc_filter_methods(Server, self, methods)
-        ServerBase.__init__(self, self._events, methods, name, context,
-                pool_size, heartbeat)
+
+        ServerBase.__init__(
+            self,
+            self._events,
+            methods,
+            name,
+            context,
+            pool_size,
+            heartbeat
+        )
 
     def close(self):
         ServerBase.close(self)
@@ -257,11 +302,23 @@ class Server(SocketBase, ServerBase):
 
 class Client(SocketBase, ClientBase):
 
-    def __init__(self, connect_to=None, context=None, timeout=30, heartbeat=5,
-            passive_heartbeat=False):
+    def __init__(self,
+                 connect_to=None,
+                 context=None,
+                 timeout=30,
+                 heartbeat=5,
+                 passive_heartbeat=False
+    ):
         SocketBase.__init__(self, zmq.XREQ, context=context)
-        ClientBase.__init__(self, self._events, context, timeout, heartbeat,
-                passive_heartbeat)
+        ClientBase.__init__(
+            self,
+            self._events,
+            context,
+            timeout,
+            heartbeat,
+            passive_heartbeat
+        )
+
         if connect_to:
             self.connect(connect_to)
 
@@ -275,12 +332,16 @@ class Pusher(SocketBase):
     def __init__(self, context=None, zmq_socket=zmq.PUSH):
         super(Pusher, self).__init__(zmq_socket, context=context)
 
-    def __call__(self, method, *args):
-        self._events.emit(method, args,
-                self._context.middleware_get_task_context())
+    def __call__(self, method, *args, **kwargs):
+        self._events.emit(
+            method,
+            args,
+            kwargs,
+            self._context.middleware_get_task_context()
+        )
 
     def __getattr__(self, method):
-        return lambda *args: self(method, *args)
+        return lambda *args, **kwargs: self(method, *args, **kwargs)
 
 
 class Puller(SocketBase):
@@ -312,7 +373,8 @@ class Puller(SocketBase):
                 self._context.middleware_load_task_context(event.header)
                 self._context.middleware_call_procedure(
                     self._methods[event.name],
-                    *event.args)
+                    *event.args,
+                    **event.kwargs)
             except Exception:
                 exc_type, exc_value, exc_traceback = sys.exc_info()
                 try:

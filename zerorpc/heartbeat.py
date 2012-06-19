@@ -76,7 +76,7 @@ class HeartBeatOnChannel(object):
                 gevent.kill(self._parent_coroutine,
                         self._lost_remote_exception())
                 break
-            self._channel.emit('_zpc_hb', (0,))  # 0 -> compat with protocol v2
+            self._channel.emit('_zpc_hb', (0,), {})  # 0 -> compat with protocol v2
 
     def _start_heartbeat(self):
         if self._heartbeat_task is None and self._heartbeat_freq is not None:
@@ -100,18 +100,18 @@ class HeartBeatOnChannel(object):
         return LostRemote('Lost remote after {0}s heartbeat'.format(
             self._heartbeat_freq * 2))
 
-    def create_event(self, name, args, xheader={}):
+    def create_event(self, name, args, kwargs=None, xheader=None):
         if self._compat_v2 and name == '_zpc_more':
             name = '_zpc_hb'
-        return self._channel.create_event(name, args, xheader)
+        return self._channel.create_event(name, args, kwargs, xheader)
 
     def emit_event(self, event):
         if self._lost_remote:
             raise self._lost_remote_exception()
         self._channel.emit_event(event)
 
-    def emit(self, name, args, xheader={}):
-        event = self.create_event(name, args, xheader)
+    def emit(self, name, args, kwargs=None, xheader=None):
+        event = self.create_event(name, args, kwargs, xheader)
         self.emit_event(event)
 
     def recv(self, timeout=None):

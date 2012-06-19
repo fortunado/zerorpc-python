@@ -27,14 +27,14 @@
 class ReqRep:
 
     def process_call(self, context, bufchan, event, functor):
-        result = context.middleware_call_procedure(functor, *event.args)
-        bufchan.emit('OK', (result,), context.middleware_get_task_context())
+        result = context.middleware_call_procedure(functor, *event.args, **event.kwargs)
+        bufchan.emit('OK', (result,), None, context.middleware_get_task_context())
+
 
     def accept_answer(self, event):
         return True
 
-    def process_answer(self, context, bufchan, event, method,
-            raise_remote_error):
+    def process_answer(self, context, bufchan, event, method, raise_remote_error):
         result = event.args[0]
         if event.name == 'ERR':
             raise_remote_error(event)
@@ -46,16 +46,18 @@ class ReqStream:
 
     def process_call(self, context, bufchan, event, functor):
         xheader = context.middleware_get_task_context()
-        for result in iter(context.middleware_call_procedure(functor,
-                *event.args)):
-            bufchan.emit('STREAM', result, xheader)
-        bufchan.emit('STREAM_DONE', None, xheader)
+        for result in iter(context.middleware_call_procedure(
+            functor,
+            *event.args,
+            **event.kwargs
+        )):
+            bufchan.emit('STREAM', result, None, xheader)
+        bufchan.emit('STREAM_DONE', None, None, xheader)
 
     def accept_answer(self, event):
         return event.name in ('STREAM', 'STREAM_DONE')
 
-    def process_answer(self, context, bufchan, event, method,
-            raise_remote_error):
+    def process_answer(self, context, bufchan, event, method, raise_remote_error):
 
         def is_stream_done(event):
             return event.name == 'STREAM_DONE'
