@@ -25,7 +25,7 @@
 execfile('zerorpc/version.py')
 
 try:
-    from setuptools import setup
+    from setuptools import setup, find_packages
 except ImportError:
     from distutils.core import setup
 
@@ -36,7 +36,7 @@ setup(
     description='zerorpc is a flexible RPC based on zeromq.',
     author=__author__,
     url='https://github.com/dotcloud/zerorpc-python',
-    packages=['zerorpc'],
+    packages=find_packages(), #['zerorpc'],
     install_requires=[
             'argparse',
             'gevent',
